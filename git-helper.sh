@@ -384,56 +384,63 @@ function elementExists() {
 
 
 function git_check_methods {
-
-	# set input field separator $IFS to end-of-line
-	ORIGIFS=$IFS
-	IFS=`echo -en "\n\b"`
-
-	if [ $1 == '-u' ]
-	then
-		unused=1;
-		file=$2
+	# Parse arguments with proper validation
+	local unused=0
+	local file=""
+	
+	if [[ $# -eq 0 ]]; then
+		echo "Usage: git_check_methods [-u] <file>" >&2
+		return 1
+	fi
+	
+	if [[ "$1" == '-u' ]]; then
+		unused=1
+		file="$2"
 	else
-		unused=0;
-		file=$1
+		unused=0
+		file="$1"
+	fi
+	
+	if [[ -z "$file" || ! -f "$file" ]]; then
+		echo "Error: File '$file' not found or not specified" >&2
+		return 1
 	fi
 
-	excluded=( __construct __destruct initialize select update delete setId getId)
+	local excluded=( __construct __destruct initialize select update delete setId getId)
 
-	for i in `egrep -o "function [A-Za-z0-9_]+\(" $file | awk '{print $2}' | sed 's/($//'`
-	do
-		runGrep=1;
-		for j in ${excluded[@]}
-		do
-			if [ $i == $j ]
-			then
-				runGrep=0;
+	# Extract function names using mapfile to avoid IFS tampering
+	local -a function_names
+	mapfile -t function_names < <(egrep -o "function [A-Za-z0-9_]+\(" "$file" | awk '{print $2}' | sed 's/($//')
+
+	for function_name in "${function_names[@]}"; do
+		# Skip if function name is in excluded list
+		local skip_function=0
+		for excluded_name in "${excluded[@]}"; do
+			if [[ "$function_name" == "$excluded_name" ]]; then
+				skip_function=1
+				break
 			fi
 		done
+		
+		if [[ $skip_function -eq 1 ]]; then
+			continue
+		fi
 
-		lines='';
-		countLines=0
+		# Use mapfile to collect grep results without IFS tampering
+		local -a grep_lines
+		mapfile -t grep_lines < <(git --no-pager grep -i "$function_name(" 2>/dev/null || true)
+		
+		local count_lines=${#grep_lines[@]}
 
-		if [ $runGrep -eq 1 ]
-		then
-			for line in `git --no-pager grep -i "$i("`
-			do
-				let "countLines += 1";
-				lines="${lines}\n${line}";
-			done
-
-			if [ $unused -eq 1 -a $countLines -eq 1 -o $unused -eq 0 ]
-			then
-				echo; echo; echo $i;
-				echo "------------------------------------";
-				echo -e $lines;
-			fi
+		# Show results based on unused flag
+		if [[ ($unused -eq 1 && $count_lines -eq 1) || $unused -eq 0 ]]; then
+			echo
+			echo
+			echo "$function_name"
+			echo "------------------------------------"
+			printf '%s\n' "${grep_lines[@]}"
 		fi
 	done
-
-	# reset IFS
-	IFS=$ORIGIFS
-
 }
 
 
